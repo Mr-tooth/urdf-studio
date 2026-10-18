@@ -114,3 +114,33 @@ test('ordinary primitives and joint updates retain the loader behavior', () => {
   assert.deepEqual((actual.colliders.shape.children[0] as Mesh).geometry.getAttribute('position').array,
     (expected.colliders.shape.children[0] as Mesh).geometry.getAttribute('position').array);
 });
+
+test('capsules in ignored robot and link extensions do not affect the preview', () => {
+  const payload = '<visual><geometry><capsule><radius>0.1</radius><length>0.4</length></capsule></geometry></visual>' +
+    '<collision><geometry><capsule radius="invalid" length="-1"/></geometry></collision>';
+  const extension = `<gazebo><plugin name="sdf_payload">${payload}` +
+    `<robot name="nested"><link name="ignored">${payload}</link></robot></plugin></gazebo>`;
+  for (const tag of ['visual', 'collision']) {
+    const xml = model('<capsule radius="0.1" length="0.4"/>', tag)
+      .replace('<link name="base">', `${extension}<link name="base">${extension}`);
+    const robot = parseUrdfWithCapsules(loader(), xml);
+    const shapes = tag === 'visual' ? robot.visual : robot.colliders;
+    assert.equal((shapes.shape.children[0] as Mesh).geometry.type, 'CapsuleGeometry');
+    assert.deepEqual(Object.keys(robot.links), ['base']);
+    const original = new DOMParser().parseFromString(xml, 'text/xml');
+    assert.deepEqual(Array.from(robot.urdfRobotNode!.querySelectorAll('gazebo'), node => node.outerHTML),
+      Array.from(original.querySelectorAll('gazebo'), node => node.outerHTML));
+  }
+});
+
+test('nested extension cylinders cannot hide a direct capsule geometry', () => {
+  for (const tag of ['visual', 'collision']) {
+    const xml = model('<capsule radius="0.1" length="0.4"/>', tag).replace('<geometry>',
+      '<extension><geometry><cylinder radius="5" length="10"/></geometry></extension><geometry>');
+    const robot = parseUrdfWithCapsules(loader(), xml);
+    const shapes = tag === 'visual' ? robot.visual : robot.colliders;
+    assert.equal((shapes.shape.children[0] as Mesh).geometry.type, 'CapsuleGeometry');
+    close(new Box3().setFromObject(robot).max.toArray(), [0.1, 0.1, 0.3]);
+    assert.equal(robot.urdfRobotNode!.querySelector('extension cylinder')!.getAttribute('length'), '10');
+  }
+});
